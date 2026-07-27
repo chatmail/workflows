@@ -19,6 +19,7 @@ their own specialized script.
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 RUFF_VERSION = "0.16.0"  # keep in sync with py-checks.yml default
@@ -41,21 +42,47 @@ def ask(prompt):
         sys.exit(0)
 
 
-def get_project_name():
-    """Reads the project name from pyproject.toml."""
+def read_pyproject():
+    """Reads pyproject.toml of the current project."""
     import tomllib
 
     with open("pyproject.toml", "rb") as f:
-        return tomllib.load(f)["project"]["name"]
+        return tomllib.load(f)
+
+
+def get_project_name():
+    """Reads the project name from pyproject.toml."""
+    return read_pyproject()["project"]["name"]
+
+
+def get_test_dependencies():
+    """Returns the "test" dependency group, as py-checks installs it."""
+    return read_pyproject().get("dependency-groups", {}).get("test", [])
+
+
+def get_tagged_versions():
+    """Returns all released versions, as (major, minor, micro) tuples.
+
+    Both "1.2.3" and "v1.2.3" tags count: repositories that switched to
+    the v prefix still have older unprefixed tags.
+    """
+    versions = []
+    for tag in run(["git", "tag"], capture=True).split():
+        match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", tag)
+        if match:
+            versions.append(tuple(int(part) for part in match.groups()))
+    return versions
 
 
 def get_current_version():
-    """Gets the latest version tag from git."""
-    try:
-        tag = run(["git", "describe", "--tags", "--abbrev=0"], capture=True)
-        return tag.lstrip("v")
-    except subprocess.CalledProcessError:
-        return "0.0.0"
+    """Gets the highest released version.
+
+    Deliberately not "git describe": that only sees tags reachable from
+    HEAD, and would happily propose a version that was already released
+    from a branch which never got merged.
+    """
+    versions = get_tagged_versions()
+    return ".".join(str(part) for part in max(versions)) if versions else "0.0.0"
 
 
 def bump_version(current, part):
@@ -96,28 +123,67 @@ def run_checks(skip_tests):
         return
     has_tests = Path("tests").is_dir() or list(Path(".").glob("test_*.py"))
     if has_tests:
-        print("--- Running pytest ---")
-        if run(["uvx", "--with-editable", ".", "pytest"]) != 0:
+        run_tests_against_built_package()
+
+
+def run_tests_against_built_package():
+    """Runs the tests against the wheel that would be released.
+
+    Building first and installing the wheel non-editable into a fresh
+    environment catches packaging mistakes that an editable install of
+    the working tree hides, such as files missing from the wheel.
+    """
+    print("--- Building the package to test ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        if run(["uv", "build", "--out-dir", tmp]) != 0:
+            print("Error: building the package failed.")
+            sys.exit(1)
+        wheels = list(Path(tmp).glob("*.whl"))
+        if len(wheels) != 1:
+            print(f"Error: expected exactly one wheel, got {wheels}.")
+            sys.exit(1)
+
+        print("--- Running pytest against the built wheel ---")
+        cmd = ["uvx", "--with", str(wheels[0]), "--with", "pytest"]
+        for dep in get_test_dependencies():
+            cmd += ["--with", dep]
+        # Without importlib mode pytest puts the repository first on
+        # sys.path, so the sources would shadow the installed wheel.
+        cmd += ["pytest", "--import-mode=importlib"]
+        # Exit code 5 means "no tests collected", like in py-checks.
+        if run(cmd) not in (0, 5):
             print("Error: tests failed (use --skip-tests to override).")
             sys.exit(1)
 
 
 def update_changelog(tag):
-    """Prepends the release section via git-cliff, if configured."""
-    if not Path("cliff.toml").exists():
-        print("No cliff.toml; skipping changelog generation (edit by hand).")
+    """Updates CHANGELOG.md for the release and opens it for editing.
+
+    With a cliff.toml, git-cliff prepends the generated section first;
+    without one the entry is written by hand. Either way the changelog
+    is opened in the editor, and True is returned if it ended up
+    differing from HEAD.
+    """
+    changelog = Path("CHANGELOG.md")
+    if Path("cliff.toml").exists():
+        cliff = ["git", "cliff", "--unreleased", "--tag", tag, "--prepend"]
+        if run([*cliff, "CHANGELOG.md"]) != 0:
+            print("Error: git-cliff failed.")
+            sys.exit(1)
+    elif not changelog.exists():
+        print("No CHANGELOG.md in this repository; skipping.")
         return False
-    if (
-        run(["git", "cliff", "--unreleased", "--tag", tag, "--prepend", "CHANGELOG.md"])
-        != 0
-    ):
-        print("Error: git-cliff failed.")
-        sys.exit(1)
+
     import os
     import shlex
 
     editor = os.environ.get("VISUAL", os.environ.get("EDITOR", "vi"))
+    print(f"--- Opening CHANGELOG.md in {editor} for the {tag} entry ---")
     run([*shlex.split(editor), "CHANGELOG.md"])
+
+    if run(["git", "diff", "--quiet", "--", "CHANGELOG.md"]) == 0:
+        print("CHANGELOG.md was left unchanged.")
+        return False
     return True
 
 
@@ -145,6 +211,12 @@ def main():
         print(f"Error: {next_ver!r} is not an X.Y.Z version.")
         sys.exit(1)
     tag = f"v{next_ver}"
+
+    # A version that was already tagged is already on PyPI, where
+    # uploads are immutable: publishing would silently skip the files.
+    if tuple(int(part) for part in next_ver.split(".")) in get_tagged_versions():
+        print(f"Error: {next_ver} was already released (tag exists).")
+        sys.exit(1)
 
     if not ask(f"\nProceed with release {tag}? [y/N]: "):
         print("Cancelled.")
