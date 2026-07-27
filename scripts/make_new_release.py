@@ -234,13 +234,19 @@ def main():
         print("Error: tag creation failed.")
         sys.exit(1)
 
-    push_cmd = f"git push origin main {tag}"
+    # --atomic so a branch rejected by branch protection cannot leave
+    # the tag pushed on its own, which would publish a release from a
+    # commit that is not on main.
+    push_cmd = f"git push --atomic origin main {tag}"
     if not ask(f"\nPush release? Will run: {push_cmd}\n[y/N]: "):
         print(f"Release {tag} created locally but NOT pushed.")
         print(f"When ready: {push_cmd}")
         return
-    if run(["git", "push", "origin", "main", tag]) != 0:
-        print("Error: push failed; commit and tag exist locally.")
+    if run(["git", "push", "--atomic", "origin", "main", tag]) != 0:
+        print("\nError: push failed; commit and tag exist only locally.")
+        print("Nothing was published. If main is protected and rejected")
+        print("the push, land the release commit through a pull request")
+        print(f"and then push the tag: git push origin {tag}")
         sys.exit(1)
 
     print(f"\nPushed {tag}; the release.yml workflow now builds and")
