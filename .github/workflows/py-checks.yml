@@ -33,28 +33,10 @@ permissions:
   contents: read
 
 jobs:
-  ruff-check:
-    name: ruff check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: astral-sh/setup-uv@v9.0.0
-
-      - run: uvx ruff@$RUFF_VERSION check .
-
-  ruff-format:
-    name: ruff format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: astral-sh/setup-uv@v9.0.0
-
-      - run: uvx ruff@$RUFF_VERSION format --check .
-
-  build:
-    name: build
+  # All checks share one runner: a job per check would pay for
+  # another checkout and uv setup each time.
+  checks:
+    name: ruff, build and tests
     runs-on: ubuntu-latest
     steps:
       # fetch-depth: 0 so setuptools-git-versioning derives the real
@@ -67,6 +49,12 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
 
+      - name: Ruff lint
+        run: uvx ruff@$RUFF_VERSION check .
+
+      - name: Ruff format check
+        run: uvx ruff@$RUFF_VERSION format --check .
+
       - name: Build sdist and wheel
         run: uv build
 
@@ -78,23 +66,11 @@ jobs:
           name: dist
           path: dist/
 
-  tests:
-    name: tests
-    if: ${{ inputs.pytest }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: astral-sh/setup-uv@v9.0.0
-        with:
-          python-version: ${{ inputs.python-version }}
-
       # Test options come from [tool.pytest.ini_options] and test
       # dependencies from [dependency-groups] test, both in the
       # repo's pyproject.toml.
       - name: Install project and test dependencies
+        if: ${{ inputs.pytest }}
         run: |
           uv venv
           uv pip install -e . pytest
@@ -107,4 +83,5 @@ jobs:
       # Exit code 5 means "no tests collected" and is fine: repos
       # without a test suite pass without any configuration.
       - name: Run pytest
+        if: ${{ inputs.pytest }}
         run: uv run --no-sync pytest || [ $? -eq 5 ]

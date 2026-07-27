@@ -8,18 +8,18 @@ caller templates, and a generic release script.
 ## What is here
 
 - `.github/workflows/py-checks.yml`
-  The reusable workflow, running one job per check so that a pull
-  request shows what passed and what failed:
+  The reusable workflow. In one job, and in this order, it runs:
 
-  - `ruff check` -- linting (ruff version pinned centrally in this
-    file)
+  - `ruff check` and `ruff format --check` (ruff version pinned
+    centrally in this file)
 
-  - `ruff format` -- formatting
+  - `uv build` plus `twine check`, uploading the distributions as a
+    `dist` artifact for release workflows
 
-  - `build` -- `uv build` plus `twine check`, uploading the
-    distributions as a `dist` artifact for release workflows
+  - pytest
 
-  - `tests` -- pytest
+  Each is a separate step, so a failing run names the step that
+  failed.
 
 - `templates/ci.yml` and `templates/release.yml`
   Copy-paste stubs for consuming repositories.
