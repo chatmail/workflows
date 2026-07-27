@@ -23,6 +23,7 @@ import tempfile
 from pathlib import Path
 
 RUFF_VERSION = "0.16.0"  # keep in sync with py-checks.yml default
+GIT_CLIFF_VERSION = "2.13.1"
 
 
 def run(cmd, capture=False):
@@ -97,6 +98,11 @@ def bump_version(current, part):
 
 
 def check_clean_main():
+    if not Path("cliff.toml").exists():
+        print("Error: no cliff.toml, which git-cliff needs to write the")
+        print("changelog. Copy one from a sibling repository and adapt the")
+        print("repository URL in its commit_preprocessors.")
+        sys.exit(1)
     branch = run(["git", "branch", "--show-current"], capture=True)
     if branch != "main":
         print(f"Error: not on branch 'main' (currently on {branch!r}).")
@@ -157,22 +163,17 @@ def run_tests_against_built_package():
 
 
 def update_changelog(tag):
-    """Updates CHANGELOG.md for the release and opens it for editing.
+    """Generates the release section and opens it for editing.
 
-    With a cliff.toml, git-cliff prepends the generated section first;
-    without one the entry is written by hand. Either way the changelog
-    is opened in the editor, and True is returned if it ended up
-    differing from HEAD.
+    git-cliff prepends the section derived from the Conventional
+    Commits since the last tag, then the changelog is opened in the
+    editor. Returns True if it ended up differing from HEAD.
     """
-    changelog = Path("CHANGELOG.md")
-    if Path("cliff.toml").exists():
-        cliff = ["git", "cliff", "--unreleased", "--tag", tag, "--prepend"]
-        if run([*cliff, "CHANGELOG.md"]) != 0:
-            print("Error: git-cliff failed.")
-            sys.exit(1)
-    elif not changelog.exists():
-        print("No CHANGELOG.md in this repository; skipping.")
-        return False
+    print("--- Generating CHANGELOG.md ---")
+    cliff = ["uvx", f"git-cliff@{GIT_CLIFF_VERSION}"]
+    if run([*cliff, "--unreleased", "--tag", tag, "--prepend", "CHANGELOG.md"]) != 0:
+        print("Error: git-cliff failed.")
+        sys.exit(1)
 
     import os
     import shlex

@@ -21,8 +21,8 @@ caller templates, and a generic release script.
   Each is a separate step, so a failing run names the step that
   failed.
 
-- `templates/ci.yml` and `templates/release.yml`
-  Copy-paste stubs for consuming repositories.
+- `templates/ci.yml`, `templates/release.yml` and `templates/cliff.toml`
+  Copy-paste starting points for consuming repositories.
 
 - `scripts/make_new_release.py`
   Generic local release driver: gates on checks, updates the
@@ -67,10 +67,13 @@ tox is not used.
 
 2. Copy `templates/release.yml` to `.github/workflows/release.yml`.
 
-3. Make sure `ruff check .` and `ruff format --check .` pass at the
+3. Copy `templates/cliff.toml` to `cliff.toml` and replace REPO with
+   the repository name. The release script requires it.
+
+4. Make sure `ruff check .` and `ruff format --check .` pass at the
    repository root.
 
-4. Releases are triggered by pushing a `v*` tag, e.g. `v0.5.0`.
+5. Releases are triggered by pushing a `v*` tag, e.g. `v0.5.0`.
 
 
 ## PyPI trusted publishing (OIDC) setup
@@ -147,8 +150,13 @@ pinned to an exact version.
 - uv as the installer, in CI and in READMEs: `uv tool install <tool>`
   for users, `uv pip install -e .` for development.
 
-- Conventional Commits and, where adopted, git-cliff for changelog
-  generation (`cliff.toml` in the repo).
+- Conventional Commits, since git-cliff generates the changelog entry
+  from them. CHANGELOG.md carries no top-level title: the release
+  script prepends each new section at the top of the file.
+
+- uv.lock is not tracked. Nothing consumes it -- CI installs from
+  pyproject.toml so that upstream breakage surfaces early -- and an
+  unchecked lockfile only goes stale.
 
 - Tags are `vX.Y.Z` and are created on the consuming repository side.
   The `v` prefix is what release.yml triggers on; PyPI itself places
