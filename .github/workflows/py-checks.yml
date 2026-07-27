@@ -1,0 +1,110 @@
+name: py-checks
+
+# Central reusable workflow for chatmail Python projects.
+# Callers reference it as:
+#
+#   uses: chatmail/workflows/.github/workflows/py-checks.yml@main
+#
+# It runs ruff lint + format checks, builds sdist+wheel (uploaded as
+# a "dist" artifact for release workflows to publish), and runs
+# pytest. The PyPI publish step stays in each caller repository:
+# PyPI trusted publishing rejects publishes from reusable workflows
+# (https://github.com/pypi/warehouse/issues/11096).
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: "Python version used for tests and build"
+        type: string
+        default: "3.11"
+        required: false
+      pytest:
+        description: "Set false for test suites needing live infrastructure"
+        type: boolean
+        default: true
+        required: false
+
+# Bumping ruff here updates lint+format checking for all consumers.
+env:
+  RUFF_VERSION: "0.16.0"
+
+permissions:
+  contents: read
+
+jobs:
+  ruff-check:
+    name: ruff check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - run: uvx ruff@$RUFF_VERSION check .
+
+  ruff-format:
+    name: ruff format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - run: uvx ruff@$RUFF_VERSION format --check .
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 so setuptools-git-versioning derives the real
+      # version from git tags instead of falling back to 0.0.x.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Check package metadata
+        run: uvx twine check dist/*
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  tests:
+    name: tests
+    if: ${{ inputs.pytest }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      # Test options come from [tool.pytest.ini_options] and test
+      # dependencies from [dependency-groups] test, both in the
+      # repo's pyproject.toml.
+      - name: Install project and test dependencies
+        run: |
+          uv venv
+          uv pip install -e . pytest
+          if python3 -c 'import tomllib; raise SystemExit(0 if "test" in tomllib.load(open("pyproject.toml","rb")).get("dependency-groups", {}) else 1)'; then
+            uv pip install --group test
+          fi
+
+      # "uv run" puts .venv/bin on PATH, so tests find console scripts
+      # of dependencies (for example deltachat-rpc-server).
+      # Exit code 5 means "no tests collected" and is fine: repos
+      # without a test suite pass without any configuration.
+      - name: Run pytest
+        run: uv run --no-sync pytest || [ $? -eq 5 ]

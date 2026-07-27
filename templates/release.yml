@@ -1,0 +1,49 @@
+# Copy to <repo>/.github/workflows/release.yml
+#
+# Publishes to PyPI via trusted publishing (OIDC) when a v* tag is
+# pushed. One-time setup per project:
+#
+#   1. On PyPI, add a trusted publisher: owner and repository of
+#      the project, workflow name "release.yml", environment "pypi".
+#      For a project not yet on PyPI, create a "pending publisher"
+#      at https://pypi.org/manage/account/publishing/ with the same
+#      values plus the PyPI project name, which must match `name`
+#      in pyproject.toml.
+#
+#   2. In the GitHub repo, create an (empty) environment named
+#      "pypi" under Settings -> Environments.
+
+name: Release to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  # Checks, tests and build via the shared reusable workflow, which
+  # uploads the built distributions as a "dist" artifact.
+  py-checks:
+    uses: chatmail/workflows/.github/workflows/py-checks.yml@main
+
+  # The publish job must stay here in the repo's own workflow: PyPI
+  # trusted publishing rejects publishes from reusable workflows.
+  # See https://github.com/pypi/warehouse/issues/11096
+  publish:
+    needs: py-checks
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
