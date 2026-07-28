@@ -1,8 +1,8 @@
-# chatmail workflows: shared CI for Python projects
+# chatmail workflows: shared CI and releasing for Python projects
 
 Central home for everything shareable between chatmail Python projects:
-a reusable GitHub Actions workflow for all Python checks,
-caller templates, and a generic release script.
+a reusable GitHub Actions workflow for all Python checks, caller
+templates, and the release script that every project releases with.
 
 
 ## What is here
@@ -25,9 +25,7 @@ caller templates, and a generic release script.
   Copy-paste starting points for consuming repositories.
 
 - `scripts/make_new_release.py`
-  Generic local release driver: gates on checks, updates the
-  changelog (git-cliff), tags `vX.Y.Z`, pushes. CI does the PyPI
-  upload; no twine or tokens on developer machines.
+  The way releases are made. See "Releasing" below.
 
 
 ## py-checks inputs
@@ -73,7 +71,50 @@ tox is not used.
 4. Make sure `ruff check .` and `ruff format --check .` pass at the
    repository root.
 
-5. Releases are triggered by pushing a `v*` tag, e.g. `v0.5.0`.
+5. Set up trusted publishing as described below, then release with
+   `scripts/make_new_release.py`.
+
+
+## Releasing
+
+Releases are made with the shared script, run from the root of the
+project repository:
+
+    python ../workflows/scripts/make_new_release.py
+
+It is the only supported way to release; tagging by hand skips the
+guards below. What it does for you:
+
+- **Refuses to release from a dubious state.** Requires the `main`
+  branch, a clean working tree and a `cliff.toml`.
+
+- **Runs the same checks as CI**, with the same pinned ruff version,
+  and fails on the same things.
+
+- **Tests the wheel it is about to release**, not the working tree,
+  so packaging mistakes such as a module missing from the wheel are
+  caught before publishing. Test dependencies come from
+  `[dependency-groups] test`. `--skip-tests` overrides.
+
+- **Proposes the next version** from the highest existing tag, and
+  refuses versions that were already released, because PyPI uploads
+  are immutable.
+
+- **Writes the changelog entry** with git-cliff from the Conventional
+  Commits since the last release, then opens it in your editor, and
+  commits it only if you changed something.
+
+- **Pushes the release commit and its tag atomically**, so a branch
+  rejected by branch protection cannot leave a dangling tag that
+  would publish from a commit which is not on main.
+
+- **Resumes an interrupted release.** Run it again after a failed
+  push and it detects the tagged HEAD, skips straight to pushing,
+  and tells you when a release is already complete.
+
+Pushing the tag is what triggers `release.yml`, which builds and
+publishes to PyPI. Nothing is uploaded from a developer machine and
+no PyPI token exists anywhere.
 
 
 ## PyPI trusted publishing (OIDC) setup
@@ -158,8 +199,8 @@ pinned to an exact version.
   pyproject.toml so that upstream breakage surfaces early -- and an
   unchecked lockfile only goes stale.
 
-- Tags are `vX.Y.Z` and are created on the consuming repository side.
-  The `v` prefix is what release.yml triggers on; PyPI itself places
-  no requirement on tag names. Repositories with older unprefixed
-  tags can switch over without renaming them: setuptools-git-versioning
-  picks the newest tag and PEP 440 drops the `v`.
+- Tags are `vX.Y.Z`, created by the release script. The `v` prefix is
+  what release.yml triggers on; PyPI itself places no requirement on
+  tag names. Repositories with older unprefixed tags can switch over
+  without renaming them: setuptools-git-versioning picks the newest
+  tag and PEP 440 drops the `v`.

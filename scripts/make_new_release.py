@@ -75,6 +75,32 @@ def get_tagged_versions():
     return versions
 
 
+def get_release_tag_at_head():
+    """Returns the vX.Y.Z tag pointing at HEAD, if there is one.
+
+    A tagged HEAD means an earlier run got as far as committing and
+    tagging but did not push, typically because branch protection
+    rejected the branch.
+    """
+    for tag in run(["git", "tag", "--points-at", "HEAD"], capture=True).split():
+        if re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+            return tag
+    return None
+
+
+def remote_has_tag(tag):
+    """Tells whether origin already carries the tag."""
+    return bool(run(["git", "ls-remote", "--tags", "origin", tag], capture=True))
+
+
+def remote_main_is_at_head():
+    """Tells whether origin's main is the commit checked out here."""
+    remote = run(["git", "ls-remote", "origin", "refs/heads/main"], capture=True)
+    if not remote:
+        return False
+    return remote.split()[0] == run(["git", "rev-parse", "HEAD"], capture=True)
+
+
 def get_current_version():
     """Gets the highest released version.
 
@@ -188,9 +214,57 @@ def update_changelog(tag):
     return True
 
 
+def push_release(name, tag):
+    """Pushes the release commit and its tag together.
+
+    --atomic so a branch rejected by branch protection cannot leave the
+    tag pushed on its own, which would publish a release from a commit
+    that is not on main. Pushing a ref that origin already has is a
+    no-op, which is what makes an interrupted release resumable.
+    """
+    push_cmd = f"git push --atomic origin main {tag}"
+    if not ask(f"\nPush release? Will run: {push_cmd}\n[y/N]: "):
+        print(f"Release {tag} exists locally but was NOT pushed.")
+        print(f"When ready: {push_cmd}")
+        return
+    if run(["git", "push", "--atomic", "origin", "main", tag]) != 0:
+        print("\nError: push failed; commit and tag exist only locally.")
+        print("Nothing was published. If main is protected and rejected")
+        print("the push, allow it in the repository ruleset, then run")
+        print("this script again to resume.")
+        sys.exit(1)
+
+    print(f"\nPushed {tag}; the release.yml workflow now builds and")
+    print(f"publishes {name} {tag.lstrip('v')} to PyPI via trusted publishing.")
+
+
+def resume_release(name, tag):
+    """Finishes a release whose commit and tag exist but were not pushed."""
+    tag_pushed = remote_has_tag(tag)
+    if tag_pushed and remote_main_is_at_head():
+        print(f"\n{tag} and main are both on origin: this release is complete.")
+        print("Commit further work before releasing again.")
+        return
+
+    print(f"\nHEAD is already tagged {tag}: resuming that release.")
+    print("Checks ran before the tag was created and are not repeated.")
+    if tag_pushed:
+        print(f"\nNote: origin already has {tag}. Pushing main completes the")
+        print("repository state but does not re-trigger release.yml. To make")
+        print(f"the release run again: git push --delete origin {tag}, then")
+        print("run this script again.")
+    push_release(name, tag)
+
+
 def main():
     name = get_project_name()
     check_clean_main()
+
+    # An earlier run may have committed and tagged but failed to push.
+    tag_at_head = get_release_tag_at_head()
+    if tag_at_head:
+        resume_release(name, tag_at_head)
+        return
 
     skip_tests = "--skip-tests" in sys.argv
     run_checks(skip_tests)
@@ -234,23 +308,7 @@ def main():
         print("Error: tag creation failed.")
         sys.exit(1)
 
-    # --atomic so a branch rejected by branch protection cannot leave
-    # the tag pushed on its own, which would publish a release from a
-    # commit that is not on main.
-    push_cmd = f"git push --atomic origin main {tag}"
-    if not ask(f"\nPush release? Will run: {push_cmd}\n[y/N]: "):
-        print(f"Release {tag} created locally but NOT pushed.")
-        print(f"When ready: {push_cmd}")
-        return
-    if run(["git", "push", "--atomic", "origin", "main", tag]) != 0:
-        print("\nError: push failed; commit and tag exist only locally.")
-        print("Nothing was published. If main is protected and rejected")
-        print("the push, land the release commit through a pull request")
-        print(f"and then push the tag: git push origin {tag}")
-        sys.exit(1)
-
-    print(f"\nPushed {tag}; the release.yml workflow now builds and")
-    print(f"publishes {name} {next_ver} to PyPI via trusted publishing.")
+    push_release(name, tag)
 
 
 if __name__ == "__main__":

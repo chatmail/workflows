@@ -1,7 +1,8 @@
 # Copy to <repo>/.github/workflows/release.yml
 #
 # Publishes to PyPI via trusted publishing (OIDC) when a v* tag is
-# pushed. One-time setup per project:
+# pushed, which scripts/make_new_release.py does. One-time setup per
+# project:
 #
 #   1. On PyPI, add a trusted publisher: owner and repository of
 #      the project, workflow name "release.yml", environment "pypi".
