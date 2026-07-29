@@ -65,17 +65,25 @@ tox is not used.
 
 ## Adopting py-checks in a repository
 
-1. Copy `templates/ci.yml` to `.github/workflows/ci.yml`.
+1. Run the install script from the root of the project repository:
 
-2. Copy `templates/release.yml` to `.github/workflows/release.yml`.
+       ../workflows/scripts/set-workflows.sh
 
-3. Copy `templates/cliff.toml` to `cliff.toml` and replace REPO with
-   the repository name. The release script requires it.
+   It installs `.github/workflows/ci.yml`, `.github/workflows/release.yml`
+   and `cliff.toml` with the repository name substituted, and stages
+   them. It asks nothing, so review with `git status` and
+   `git diff --cached`.
 
-4. Make sure `ruff check .` and `ruff format --check .` pass at the
+   ci.yml is boilerplate and is overwritten on every run, so re-run the
+   script whenever the templates change here. release.yml and cliff.toml
+   are only ever created and reported as `kept` afterwards: a repository
+   may gate publishing on jobs of its own, as cmlxc gates it on the full
+   Incus suite.
+
+2. Make sure `ruff check .` and `ruff format --check .` pass at the
    repository root.
 
-5. Set up trusted publishing as described below, then release with
+3. Set up trusted publishing as described below, then release with
    `scripts/make_new_release.py`.
 
 

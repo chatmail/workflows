@@ -1,9 +1,4 @@
-# Copy to <repo>/.github/workflows/ci.yml
-#
-# Runs the shared chatmail Python checks on pushes to main and on
-# pull requests. Optional inputs: python-version (default "3.11"),
-# pytest (default true; set false for test suites that need live
-# infrastructure).
+# Standard workflow config of chatmail/workflow's py-checks flow.
 
 name: CI
 

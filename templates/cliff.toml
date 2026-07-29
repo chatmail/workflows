@@ -1,11 +1,10 @@
-# Copy to <repo>/cliff.toml and replace REPO with the repository
-# name. Used by scripts/make_new_release.py to generate the
+# Copy to <repo>/cliff.toml and replace REPO with the repository name. 
+# Used by chatmail/workflow's scripts/make_new_release.py to generate the
 # CHANGELOG.md entry from Conventional Commits.
 #
-# header is empty on purpose: the release script prepends the new
-# section, so CHANGELOG.md carries no top-level title.
-# configuration file for git-cliff
-# see https://git-cliff.org/docs/configuration/
+# header is empty on purpose as the release script prepends the new section, 
+# so CHANGELOG.md carries no top-level title.
+# see also https://git-cliff.org/docs/configuration/
 
 
 [git]
