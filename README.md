@@ -97,7 +97,8 @@ project repository:
 It is the only supported way to release; tagging by hand skips the release-guards:
 
 - **Refuses to release from a dubious state.** Requires the `main`
-  branch, a clean working tree and a `cliff.toml`.
+  branch, a clean working tree, a `cliff.toml`, and a checkout that
+  origin's `main` has not moved past.
 
 - **Runs the same checks as CI**, with the same pinned ruff version,
   and fails on the same things.
@@ -118,9 +119,16 @@ It is the only supported way to release; tagging by hand skips the release-guard
   a branch rejected by branch protection cannot leave a dangling tag
   that would publish from a commit which is not on main.
 
+- **Does nothing when there is nothing to release.** Before anything
+  else it compares HEAD against the highest release tag, and if HEAD
+  holds no commits that release does not already have, it says so and
+  exits without offering a version or running the checks.
+
 - **Resumes an interrupted release.** Run it again after a failed
   push and it detects the tagged HEAD, skips straight to pushing,
   and tells you when a release is already complete.
+  Every run is therefore repeatable: it either finishes what the last
+  run started or reports that nothing is left to do.
 
 Pushing the tag is what triggers `release.yml`, which builds and publishes to PyPI.
 Nothing is uploaded from a developer machine and no PyPI token exists anywhere.

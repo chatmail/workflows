@@ -34,6 +34,17 @@ def run(cmd, capture=False):
     return subprocess.run(cmd, check=False).returncode
 
 
+def git_succeeds(args):
+    """Runs a git query for its exit code alone, keeping its output quiet.
+
+    For predicates such as merge-base --is-ancestor, whose failure
+    message would only get in the way of the diagnosis printed here.
+    """
+    print(f"$ git {' '.join(args)}")
+    completed = subprocess.run(["git", *args], capture_output=True, check=False)
+    return completed.returncode == 0
+
+
 def ask(prompt):
     """Prompt the user for yes/no confirmation."""
     try:
@@ -61,44 +72,75 @@ def get_test_dependencies():
     return read_pyproject().get("dependency-groups", {}).get("test", [])
 
 
-def get_tagged_versions():
-    """Returns all released versions, as (major, minor, micro) tuples.
+def get_release_tags():
+    """Returns released versions as a {(major, minor, micro): tag} mapping.
 
     Both "1.2.3" and "v1.2.3" tags count: repositories that switched to
-    the v prefix still have older unprefixed tags.
+    the v prefix still have older unprefixed tags, and a release made
+    before the switch must still be recognized as a release.
     """
-    versions = []
+    tags = {}
     for tag in run(["git", "tag"], capture=True).split():
         match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", tag)
         if match:
-            versions.append(tuple(int(part) for part in match.groups()))
-    return versions
+            tags[tuple(int(part) for part in match.groups())] = tag
+    return tags
 
 
-def get_release_tag_at_head():
-    """Returns the vX.Y.Z tag pointing at HEAD, if there is one.
+def get_latest_release_tag():
+    """Returns the tag of the highest released version, if any."""
+    tags = get_release_tags()
+    return tags[max(tags)] if tags else None
 
-    A tagged HEAD means an earlier run got as far as committing and
-    tagging but did not push, typically because branch protection
-    rejected the branch.
+
+def get_unreleased_commits(tag):
+    """Returns the commits on HEAD that the tag does not already contain."""
+    return run(["git", "rev-list", f"{tag}..HEAD"], capture=True).split()
+
+
+def tag_is_at_head(tag):
+    """Tells whether the tag points at the commit checked out here."""
+    return tag in run(["git", "tag", "--points-at", "HEAD"], capture=True).split()
+
+
+def query_remote(ref):
+    """Returns origin's commit for the ref, or None if origin lacks it.
+
+    Bails out when origin cannot be reached at all: every decision
+    below needs to know what origin already has, and guessing would
+    either release twice or call an unpushed release complete.
     """
-    for tag in run(["git", "tag", "--points-at", "HEAD"], capture=True).split():
-        if re.fullmatch(r"v\d+\.\d+\.\d+", tag):
-            return tag
-    return None
+    print(f"$ git ls-remote origin {ref}")
+    completed = subprocess.run(
+        ["git", "ls-remote", "origin", ref], capture_output=True, text=True, check=False
+    )
+    if completed.returncode != 0:
+        print(f"Error: cannot reach origin: {completed.stderr.strip()}")
+        sys.exit(1)
+    output = completed.stdout.strip()
+    return output.split()[0] if output else None
 
 
 def remote_has_tag(tag):
     """Tells whether origin already carries the tag."""
-    return bool(run(["git", "ls-remote", "--tags", "origin", tag], capture=True))
+    return query_remote(f"refs/tags/{tag}") is not None
 
 
-def remote_main_is_at_head():
-    """Tells whether origin's main is the commit checked out here."""
-    remote = run(["git", "ls-remote", "origin", "refs/heads/main"], capture=True)
-    if not remote:
+def get_remote_main():
+    """Returns origin's main commit, or None if origin has no main yet."""
+    return query_remote("refs/heads/main")
+
+
+def head_contains(commit):
+    """Tells whether the local history up to HEAD contains the commit.
+
+    False means origin is ahead of this checkout or has diverged from
+    it, so nothing here can be pushed as main: not a release commit,
+    and not a tag alongside it.
+    """
+    if not git_succeeds(["cat-file", "-e", f"{commit}^{{commit}}"]):
         return False
-    return remote.split()[0] == run(["git", "rev-parse", "HEAD"], capture=True)
+    return git_succeeds(["merge-base", "--is-ancestor", commit, "HEAD"])
 
 
 def get_current_version():
@@ -108,7 +150,7 @@ def get_current_version():
     HEAD, and would happily propose a version that was already released
     from a branch which never got merged.
     """
-    versions = get_tagged_versions()
+    versions = list(get_release_tags())
     return ".".join(str(part) for part in max(versions)) if versions else "0.0.0"
 
 
@@ -123,21 +165,46 @@ def bump_version(current, part):
     return f"0.{minor}.{micro + 1}"
 
 
-def check_clean_main():
+def check_on_main():
+    """Refuses to look at release state from anywhere but main.
+
+    Checked before everything else: on a feature branch the commit
+    counts and tag comparisons below would describe the wrong history.
+    """
+    branch = run(["git", "branch", "--show-current"], capture=True)
+    if branch != "main":
+        print(f"Error: not on branch 'main' (currently on {branch!r}).")
+        sys.exit(1)
+
+
+def check_ready_to_release():
+    """Refuses to start a release the repository cannot carry through."""
     if not Path("cliff.toml").exists():
         print("Error: no cliff.toml, which git-cliff needs to write the")
         print("changelog. Copy one from a sibling repository and adapt the")
         print("repository URL in its commit_preprocessors.")
-        sys.exit(1)
-    branch = run(["git", "branch", "--show-current"], capture=True)
-    if branch != "main":
-        print(f"Error: not on branch 'main' (currently on {branch!r}).")
         sys.exit(1)
     if (
         run(["git", "diff", "--quiet"]) != 0
         or run(["git", "diff", "--cached", "--quiet"]) != 0
     ):
         print("Error: uncommitted changes in the repository.")
+        sys.exit(1)
+    check_not_behind_origin()
+
+
+def check_not_behind_origin():
+    """Refuses to release from a main that origin has moved past.
+
+    Such a release would tag a commit that is not origin's main, and
+    the atomic push would be rejected afterwards anyway, leaving a tag
+    to clean up before the next attempt.
+    """
+    remote_main = get_remote_main()
+    if remote_main and not head_contains(remote_main):
+        print(f"Error: origin/main ({remote_main[:8]}) is not contained in this")
+        print("checkout, which is therefore behind it or has diverged from it.")
+        print("Run: git pull --tags")
         sys.exit(1)
 
 
@@ -238,11 +305,44 @@ def push_release(name, tag):
     print(f"publishes {name} {tag.lstrip('v')} to PyPI via trusted publishing.")
 
 
+def handle_nothing_to_release(name, tag):
+    """Reports that HEAD holds nothing the last release does not have.
+
+    This is the no-op case that makes the script safe to run twice: it
+    either finishes a release whose push did not go through, or says
+    there is nothing to do. It never offers a new version, because any
+    version cut here would release the already released commit again.
+    """
+    if not tag_is_at_head(tag):
+        print(f"\nNothing to release: {tag} already contains HEAD, so this")
+        print("checkout is behind the last release. Run: git pull --tags")
+        return
+    resume_release(name, tag)
+
+
 def resume_release(name, tag):
     """Finishes a release whose commit and tag exist but were not pushed."""
     tag_pushed = remote_has_tag(tag)
-    if tag_pushed and remote_main_is_at_head():
-        print(f"\n{tag} and main are both on origin: this release is complete.")
+    remote_main = get_remote_main()
+    head = run(["git", "rev-parse", "HEAD"], capture=True)
+
+    if remote_main and not head_contains(remote_main):
+        # Nothing here can be pushed as main, so there is no resuming:
+        # either that release already happened elsewhere, or the local
+        # tag has to go before main can be released again.
+        if tag_pushed:
+            print(f"\nNothing to release: {tag} is on origin and origin/main")
+            print(f"({remote_main[:8]}) has moved on, so this checkout is just")
+            print("behind. Run: git pull --tags")
+            return
+        print(f"\nError: HEAD is tagged {tag}, but origin/main ({remote_main[:8]})")
+        print("is not contained in this checkout, so that tag can never be")
+        print(f"pushed as main. Run: git tag -d {tag} && git pull --tags")
+        sys.exit(1)
+
+    if tag_pushed and remote_main == head:
+        print(f"\nNothing to release: {tag} is the latest release and both it")
+        print("and main are on origin, so that release is complete.")
         print("Commit further work before releasing again.")
         return
 
@@ -258,13 +358,17 @@ def resume_release(name, tag):
 
 def main():
     name = get_project_name()
-    check_clean_main()
+    check_on_main()
 
-    # An earlier run may have committed and tagged but failed to push.
-    tag_at_head = get_release_tag_at_head()
-    if tag_at_head:
-        resume_release(name, tag_at_head)
+    # Decided before any gate that could fail for another reason, and
+    # before the checks, so that a repository with nothing to release
+    # says so instead of spending a test run on the answer.
+    latest = get_latest_release_tag()
+    if latest and not get_unreleased_commits(latest):
+        handle_nothing_to_release(name, latest)
         return
+
+    check_ready_to_release()
 
     skip_tests = "--skip-tests" in sys.argv
     run_checks(skip_tests)
@@ -289,7 +393,7 @@ def main():
 
     # A version that was already tagged is already on PyPI, where
     # uploads are immutable: publishing would silently skip the files.
-    if tuple(int(part) for part in next_ver.split(".")) in get_tagged_versions():
+    if tuple(int(part) for part in next_ver.split(".")) in get_release_tags():
         print(f"Error: {next_ver} was already released (tag exists).")
         sys.exit(1)
 
