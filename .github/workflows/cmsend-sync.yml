@@ -1,0 +1,88 @@
+name: cmsend-sync
+# Reusable nightly workflow going along with cmsend-notify.yml:
+#  1. Logs in to keep account alive
+#  2. Fetches group updates (memberships and keys)
+#  3. Stores the new profile data in an encrypted cache file
+
+on:
+  workflow_call:
+    inputs:
+      alert-tag: { type: string, default: "LOG" }
+    secrets:
+      cmsend-account: { required: true }
+permissions: {}
+env:
+  # TEMPORARY: --sync is unreleased, so install from the branch that has it.
+  # Swap back to a plain "cmsend@<version>" pin once cmsend is tagged.
+  CMSEND_SPEC: "git+https://github.com/chatmail/cmsend@ci-sync-and-name"
+concurrency:
+  group: cmsend-sync-${{ github.repository }}
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: cache
+        with:
+          path: ~/cmsend-profile.enc
+          key: cmsend-profile-${{ github.run_id }}
+          restore-keys: cmsend-profile-
+
+      - name: Unpack cmsend profile
+        # Note: Keep the following in sync with cmsend-notify.yml and scripts/pack-cmsend-profile.sh!
+        env:
+          B64: ${{ secrets.cmsend-account }}
+          HIT: ${{ steps.cache.outputs.cache-matched-key }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.config/cmsend
+          printf '%s' "$B64" | sha256sum | cut -d' ' -f1 > ~/.cmsend-key
+          if [ -n "$HIT" ]; then
+            openssl enc -d -aes-256-cbc -pbkdf2 -pass file:$HOME/.cmsend-key \
+              -in ~/cmsend-profile.enc | tar -C ~/.config/cmsend -xzf -
+          else
+            echo "::warning::cmsend cache cold, seeding from the secret"
+            printf '%s' "$B64" | base64 -d | tar -C ~/.config/cmsend -xzf -
+            for s in ~/.config/cmsend/*/dc.sql; do
+              d=$(dirname "$s"); sqlite3 "$d/dc.db" < "$s"
+              mkdir -p "$d/dc.db-blobs"; rm -f "$s"
+            done
+          fi
+
+      - name: Fetch
+        run: uvx --from "$CMSEND_SPEC" cmsend --fetch-only
+
+      - name: Report membership changes
+        env:
+          ALERT_TAG: ${{ inputs.alert-tag }}
+          REPO:      ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          new=~/.config/cmsend/roster.new
+          uvx --from "$CMSEND_SPEC" cmsend -l | sort > $new
+          old=~/.config/cmsend/roster.txt
+          if [ -f "$old" ] && ! diff -q "$old" "$new" > /dev/null; then
+            { printf '%s cmsend member list changed:\n' "$REPO"
+              diff "$old" "$new" || true
+            } | uvx --from "$CMSEND_SPEC" cmsend -t "$ALERT_TAG"
+          fi
+          cp "$new" "$old"
+
+      - name: Seal profile
+        run: |
+          set -euo pipefail
+          tar -C ~/.config/cmsend -czf - . |
+            openssl enc -aes-256-cbc -pbkdf2 -salt -pass file:$HOME/.cmsend-key \
+              -out ~/cmsend-profile.enc
+
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/cmsend-profile.enc
+          key: cmsend-profile-${{ github.run_id }}
+
+      - name: Scrub the profile
+        if: always()
+        run: rm -rf ~/.config/cmsend ~/.cmsend-key ~/cmsend-profile.enc
