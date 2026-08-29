@@ -12,14 +12,21 @@ offers to push. The actual PyPI upload happens in CI: pushing the tag
 triggers the repo's release.yml, which builds and publishes via
 trusted publishing (OIDC). No twine, no local credentials.
 
+After the push the script follows the release run with gh, which brings its own
+authentication (GH_TOKEN or gh auth login), and reports the published version;
+without gh or without access to the repository it prints the Actions URL instead.
+
 Projects with heavier release gates (e.g. cmlxc's Incus fullrun) keep
 their own specialized script.
 """
 
+import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 RUFF_VERSION = "0.16.0"  # keep in sync with py-checks.yml default
@@ -303,6 +310,61 @@ def push_release(name, tag):
 
     print(f"\nPushed {tag}; the release.yml workflow now builds and")
     print(f"publishes {name} {tag.lstrip('v')} to PyPI via trusted publishing.")
+    watch_release_run(name, tag)
+
+
+def watch_release_run(name, tag):
+    """Follows the release run for the tag via gh, best effort.
+
+    The release is already pushed when this runs, so every failure mode here only
+    downgrades to printing the Actions URL; it never makes a pushed release look failed.
+    gh run watch renders its own live progress view and exits nonzero when the run fails.
+    """
+    url = run(["git", "remote", "get-url", "origin"], capture=True)
+    match = re.search(r"github\.com[:/](.+?/.+?)(?:\.git)?$", url)
+    if not match:
+        return
+    slug = match.group(1)
+    actions = f"https://github.com/{slug}/actions"
+    if shutil.which("gh") is None:
+        print(f"gh not installed; watch the release at {actions}")
+        return
+
+    # A tag push materializes as a run whose headBranch is the tag;
+    # it can take a few seconds to appear after the push.
+    print("--- Waiting for the release run to appear ---")
+    run_id = None
+    for _ in range(30):
+        cmd = ["gh", "run", "list", "-R", slug, "--workflow", "release.yml"]
+        cmd += ["--json", "databaseId,headBranch", "--limit", "10"]
+        listed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if listed.returncode != 0:
+            print(f"gh cannot list runs for {slug}: {listed.stderr.strip()}")
+            print(f"Watch the release at {actions}")
+            return
+        for entry in json.loads(listed.stdout or "[]"):
+            if entry.get("headBranch") == tag:
+                run_id = str(entry["databaseId"])
+                break
+        if run_id:
+            break
+        time.sleep(2)
+    if run_id is None:
+        print(f"No release run appeared within a minute; check {actions}")
+        return
+
+    print(f"--- Watching release run {run_id} ---")
+    try:
+        watched = run(["gh", "run", "watch", run_id, "-R", slug, "--exit-status"])
+    except KeyboardInterrupt:
+        print(f"\nStopped watching; the release continues at {actions}")
+        return
+    if watched == 0:
+        print(f"\nRelease complete: https://pypi.org/project/{name}/{tag.lstrip('v')}/")
+    else:
+        print(f"\nRelease run FAILED: https://github.com/{slug}/actions/runs/{run_id}")
+        print("The tag is pushed; fix the cause, delete the remote tag")
+        print(f"(git push --delete origin {tag}) and run this script again.")
 
 
 def handle_nothing_to_release(name, tag):
