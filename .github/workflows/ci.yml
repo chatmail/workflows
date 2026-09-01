@@ -1,0 +1,48 @@
+# CI for this repository itself. py-checks cannot serve here: it builds
+# and publishes a Python package, and this repository has none.
+
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+    tags-ignore: [ '**' ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# tests/test_pins.py keeps this equal to the other two pins.
+env:
+  RUFF_VERSION: "0.16.0"
+
+jobs:
+  checks:
+    name: ruff, shellcheck and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Ruff lint
+        run: uvx ruff@$RUFF_VERSION check .
+
+      - name: Ruff format check
+        run: uvx ruff@$RUFF_VERSION format --check .
+
+      # shellcheck comes with the runner image.
+      - name: Shellcheck
+        run: shellcheck scripts/set-workflows.sh
+
+      - name: Run tests
+        run: uvx pytest

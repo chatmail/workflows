@@ -150,3 +150,17 @@ For now, consumers reference `py-checks.yml@main` so refinements propagate immed
 The ruff version is pinned in py-checks.yml and bumped centrally there.
 Actions are pinned to their major tags, except `astral-sh/setup-uv`,
 which publishes no moving major tag and is pinned to an exact version.
+The release script and the CI of this repository carry the same pin,
+and `tests/test_pins.py` fails when the three drift apart.
+
+
+## Developing this repository
+
+py-checks does not apply here: this repository ships templates and
+scripts, not a package. Its own `ci.yml` runs ruff, shellcheck on
+`set-workflows.sh`, and a pytest suite that installs the templates
+into fixture repositories and checks what comes out of them.
+
+Run the same checks locally with `uvx ruff check .`,
+`uvx ruff format --check .`, `shellcheck scripts/set-workflows.sh`
+and `uvx pytest`.
