@@ -181,8 +181,8 @@ def check_ready_to_release():
     """Refuses to start a release the repository cannot carry through."""
     if not Path("cliff.toml").exists():
         print("Error: no cliff.toml, which git-cliff needs to write the")
-        print("changelog. Copy one from a sibling repository and adapt the")
-        print("repository URL in its commit_preprocessors.")
+        print("changelog. Install one by running scripts/set-workflows.sh")
+        print("from the workflows repository here.")
         sys.exit(1)
     if (
         run(["git", "diff", "--quiet"]) != 0

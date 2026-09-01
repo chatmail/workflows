@@ -71,10 +71,10 @@ tox is not used.
 
        ../workflows/scripts/set-workflows.sh
 
-   It installs `.github/workflows/ci.yml`, `.github/workflows/release.yml`
-   and `cliff.toml` with the repository name substituted, and stages
-   them. It asks nothing, so review with `git status` and
-   `git diff --cached`.
+   It installs `.github/workflows/ci.yml`, `.github/workflows/release.yml` and `cliff.toml`,
+   putting the owner and repository name that `origin` names into the changelog links,
+   and stages the files. A repository outside the chatmail organization is set up the same way.
+   The script asks nothing, so review with `git status` and `git diff --cached`.
 
    ci.yml is boilerplate and is overwritten on every run, so re-run the
    script whenever the templates change here. release.yml and cliff.toml

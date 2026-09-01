@@ -1,4 +1,4 @@
-# Copy to <repo>/cliff.toml and replace REPO with the repository name. 
+# Copy to <repo>/cliff.toml, replacing OWNER/REPO with owner and name.
 # Used by chatmail/workflow's scripts/make_new_release.py to generate the
 # CHANGELOG.md entry from Conventional Commits.
 #
@@ -16,7 +16,7 @@ filter_unconventional = false
 split_commits = false
 # regex for preprocessing the commit messages
 commit_preprocessors = [
-    { pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](https://github.com/chatmail/REPO/pull/${2}))"}, # replace pull request / issue numbers
+    { pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](https://github.com/OWNER/REPO/pull/${2}))"}, # replace pull request / issue numbers
 ]
 # regex for parsing and grouping commits
 commit_parsers = [
@@ -78,11 +78,11 @@ footer = """
     {% if release.version -%}
         {% if release.previous.version -%}
             [{{ release.version | trim_start_matches(pat="v") }}]: \
-                https://github.com/chatmail/REPO\
+                https://github.com/OWNER/REPO\
                     /compare/{{ release.previous.version }}..{{ release.version }}
         {% endif -%}
     {% else -%}
-        [unreleased]: https://github.com/chatmail/REPO\
+        [unreleased]: https://github.com/OWNER/REPO\
             /compare/{{ release.previous.version }}..HEAD
     {% endif -%}
 {% endfor %}
