@@ -1,0 +1,93 @@
+name: cmsend-notify
+# Reusable workflow to notify a chatmail group about workflow result state changes
+# via the [`cmsend`](https://github.com/chatmail/cmsend) CLI, needs to be paired with `cmsend-sync.yml`, see doc/cmsend-notify/README.md.
+
+on:
+  workflow_call:
+    inputs:
+      result:    { type: string, required: true }   # needs.<job>.result
+      alert-tag: { type: string, default: "LOG" }
+    secrets:
+      cmsend-account: { required: true }   # base64 seed, see README.md
+env:
+  # TEMPORARY: --sync is unreleased, swap back to "cmsend@<version>" pin after merge
+  CMSEND_SPEC: "git+https://github.com/chatmail/cmsend@ci-sync-and-name"
+permissions:
+  actions: read   # read the previous run's conclusion (for change-only alerts)
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check notification necessity
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:     ${{ github.repository }}
+          RUN_ID:   ${{ github.run_id }}
+          BRANCH:   ${{ github.ref_name }}
+          RESULT:   ${{ inputs.result }}
+        run: |
+          set -euo pipefail
+          WF_ID=$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq .workflow_id)
+          PREV=$(gh api \
+            "repos/$REPO/actions/workflows/$WF_ID/runs?branch=$BRANCH&status=completed&per_page=1" \
+            --jq '.workflow_runs[0].conclusion // "none"')
+          case "$RESULT:$PREV" in
+            success:failure) echo "verb=RECOVERED" >> "$GITHUB_OUTPUT" ;;
+            failure:failure) echo "no change (still failing), staying quiet" ;;
+            failure:*)       echo "verb=FAILED"    >> "$GITHUB_OUTPUT" ;;
+            success:*)       echo "no change (still passing), staying quiet" ;;
+            *)               echo "result=$RESULT: no notification" ;;
+          esac
+
+      - if: steps.gate.outputs.verb
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Restore cmsend profile
+        if: steps.gate.outputs.verb
+        # Prefer the nightly-refreshed cache, seed is fallback 
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: cache
+        with:
+          path: ~/cmsend-profile.enc
+          key: cmsend-profile-${{ github.run_id }}
+          restore-keys: cmsend-profile-
+
+      - name: Unpack cmsend profile
+        if: steps.gate.outputs.verb
+        # Keep this in sync with account.sh unpack and cmsend-sync.yml.
+        env:
+          B64: ${{ secrets.cmsend-account }}
+          HIT: ${{ steps.cache.outputs.cache-matched-key }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.config/cmsend
+          if [ -n "$HIT" ]; then
+            printf '%s' "$B64" | sha256sum | cut -d' ' -f1 > ~/.cmsend-key
+            openssl enc -d -aes-256-cbc -pbkdf2 -pass file:$HOME/.cmsend-key \
+              -in ~/cmsend-profile.enc | tar -C ~/.config/cmsend -xzf -
+          else
+            echo "::warning::cmsend cache retrieve failed, falling back to the seed secret"
+            printf '%s' "$B64" | base64 -d | tar -C ~/.config/cmsend -xzf -
+            for s in ~/.config/cmsend/*/dc.sql; do
+              d=$(dirname "$s"); sqlite3 "$d/dc.db" < "$s"
+              mkdir -p "$d/dc.db-blobs"; rm -f "$s"
+            done
+          fi
+
+      - name: Notify
+        if: steps.gate.outputs.verb
+        env:
+          VERB:      ${{ steps.gate.outputs.verb }}
+          ALERT_TAG: ${{ inputs.alert-tag }}
+          REPO:      ${{ github.repository }}
+          WF:        ${{ github.workflow }}
+          RUN_URL:   ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          printf '%s %s %s\n%s' "$REPO" "$WF" "$VERB" "$RUN_URL" |
+            uvx --from "$CMSEND_SPEC" cmsend -t "$ALERT_TAG"
+
+      - name: Scrub the profile
+        if: always()
+        run: rm -rf ~/.config/cmsend ~/.cmsend-key ~/cmsend-profile.enc

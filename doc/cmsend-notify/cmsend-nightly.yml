@@ -1,0 +1,12 @@
+name: cmsend-nightly
+# cmsend-notify: run the nightly account sync
+on:
+  schedule:
+    - cron: "43 4 * * *"
+  workflow_dispatch:
+permissions: {}
+jobs:
+  sync:
+    uses: chatmail/workflows/.github/workflows/cmsend-sync.yml@cmsend-notify
+    secrets:
+      cmsend-account: ${{ secrets.CMSEND_ACCOUNT_TGZ_B64 }}
