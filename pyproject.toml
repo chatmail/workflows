@@ -1,0 +1,18 @@
+# Not a package: only tool configuration lives here.
+
+[tool.ruff]
+lint.select = [
+  "F", # Pyflakes
+  "I", # isort
+
+  "PLC", # Pylint Convention
+  "PLE", # Pylint Error
+  "PLW", # Pylint Warning
+]
+lint.ignore = [
+  "PLC0415" # import-outside-top-level
+]
+
+[tool.pytest.ini_options]
+addopts = "-v -ra --strict-markers"
+testpaths = ["tests"]
