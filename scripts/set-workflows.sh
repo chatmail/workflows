@@ -23,10 +23,13 @@ if [ ! -f pyproject.toml ]; then
 fi
 
 remote=$(git remote get-url origin 2>/dev/null || echo "")
-case "$remote" in
-    *github.com*) name=$(basename "${remote%.git}") ;;
-    *)            name=$(basename "$repo") ;;
-esac
+slug=$(printf '%s\n' "${remote%.git}" | sed -n 's#.*github\.com[:/]##p')
+
+if [ -z "$slug" ]; then
+    echo "origin is not a github.com repository: ${remote:-none}" >&2
+    echo "cliff.toml needs owner/name for the links in its changelog" >&2
+    exit 1
+fi
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -51,12 +54,14 @@ install_once() {
     install "$src" "$dst"
 }
 
-echo "$name:"
+echo "$slug:"
 
 install "$shared/templates/ci.yml" .github/workflows/ci.yml
 install_once "$shared/templates/release.yml" .github/workflows/release.yml
 
-sed "s/REPO/$name/g" "$shared/templates/cliff.toml" >"$tmp/cliff.toml"
+# The first line tells a human to do by hand what the script does.
+sed -e "/^# Copy to /d" -e "s|github.com/OWNER/REPO|github.com/$slug|g" \
+    "$shared/templates/cliff.toml" >"$tmp/cliff.toml"
 install_once "$tmp/cliff.toml" cliff.toml
 
 echo
