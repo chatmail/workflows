@@ -69,9 +69,14 @@ def read_pyproject():
         return tomllib.load(f)
 
 
+def release_settings():
+    """[tool.make-new-release]: `name` and `version-file` of a repo without a package."""
+    return read_pyproject().get("tool", {}).get("make-new-release", {})
+
+
 def get_project_name():
     """Reads the project name from pyproject.toml."""
-    return read_pyproject()["project"]["name"]
+    return release_settings().get("name") or read_pyproject()["project"]["name"]
 
 
 def get_test_dependencies():
@@ -464,6 +469,10 @@ def main():
         return
 
     changed = update_changelog(tag)
+    if version_file := release_settings().get("version-file"):
+        Path(version_file).write_text(f"{next_ver}\n")
+        run(["git", "add", version_file])
+        changed = True
     if changed:
         run(["git", "add", "CHANGELOG.md"])
         if run(["git", "commit", "-m", f"chore: release {tag}"]) != 0:

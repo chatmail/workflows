@@ -103,6 +103,14 @@ Eventually, pushing the release tag to origin is what triggers `release.yml`,
 which builds and publishes to PyPI.  
 Nothing is uploaded from a developer machine and no PyPI token exists anywhere.
 
+A repository that publishes no package, but release files of its own,
+names itself in its root `pyproject.toml`, and may name a file that carries its version,
+which the release commit then sets beside CHANGELOG.md:
+
+    [tool.make-new-release]
+    name = "cmrelay"
+    version-file = "host/VERSION"
+
 
 ## PyPI trusted publishing (OIDC) setup
 
