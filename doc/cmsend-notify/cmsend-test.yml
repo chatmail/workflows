@@ -1,0 +1,25 @@
+name: notify-test
+on:
+  workflow_dispatch:
+    inputs:
+      force_fail: { type: boolean, default: false }
+permissions: {}
+jobs:
+  work:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - if: ${{ inputs.force_fail }}
+        run: exit 1
+      - if: ${{ !inputs.force_fail }}
+        run: exit 0
+  notify:
+    needs: work
+    if: always()
+    permissions:
+      actions: read   # let the reusable workflow read the previous run's result
+    uses: chatmail/workflows/.github/workflows/cmsend-notify.yml@cmsend-notify
+    with:
+      result: ${{ needs.work.result }}
+    secrets:
+      cmsend-account: ${{ secrets.CMSEND_ACCOUNT_TGZ_B64 }}
